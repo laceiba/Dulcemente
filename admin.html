@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dulcemente </title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Cargar React y ReactDOM desde CDN confiables -->
+    <script src="https://unpkg.com/react@18.2.0/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Cargar Supabase desde UNPKG (más fiable) -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Pacifico&display=swap" rel="stylesheet">
+    <style>
+        body { background: linear-gradient(135deg, #FFF8E7 0%, #FFE4E1 100%); font-family: 'Nunito', sans-serif; }
+        .glass-card { background: rgba(255,255,255,0.9); backdrop-filter: blur(10px); border-radius: 1.5rem; box-shadow: 0 8px 32px rgba(255,182,193,0.2); }
+        .drop-zone { border: 2px dashed #ffb6c1; border-radius: 1rem; background: rgba(255,255,255,0.5); transition: all 0.3s; cursor: pointer; }
+        .drop-zone.dragover { background: rgba(255,182,193,0.3); border-color: #ff69b4; }
+        .btn-admin { transition: all 0.2s ease; }
+        .btn-admin:hover { transform: translateY(-2px); }
+        .error-box { background: #fee2e2; border-left: 4px solid #dc2626; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Verificar si Supabase se cargó correctamente
+        if (typeof supabaseJs === 'undefined' && typeof supabase === 'undefined') {
+            document.getElementById('root').innerHTML = `
+                <div class="p-8 text-center text-red-600">
+                    <i class="fas fa-exclamation-triangle text-5xl"></i>
+                    <h2 class="text-2xl font-bold mt-4">Error: Supabase no se cargó</h2>
+                    <p class="mt-2">El CDN de Supabase no está disponible. Prueba a:</p>
+                    <ul class="list-disc text-left max-w-md mx-auto mt-4">
+                        <li>Recargar la página (Ctrl+F5)</li>
+                        <li>Cambiar de navegador (Chrome, Edge, Firefox)</li>
+                        <li>Desactivar extensiones que bloqueen scripts (adblockers, antivirus)</li>
+                        <li>Usar una VPN o red diferente</li>
+                    </ul>
+                    <p class="mt-4 text-sm">Si el problema persiste, <a href="https://app.supabase.com" target="_blank" class="text-blue-500 underline">verifica que tu proyecto Supabase esté activo</a>.</p>
+                </div>
+            `;
+            throw new Error('Supabase no cargado');
+        }
+
+        // Usar la variable correcta (supabaseJs o supabase)
+        const SupabaseClient = window.supabaseJs || window.supabase;
+        const SUPABASE_URL = 'https://gejvthepkxlpsbayuvai.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_gP3rd7bb43vuGaTbcTzMNg_Tw02V78w';
+        const supabase = SupabaseClient.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Componente principal (igual que antes, pero con mejor manejo de errores)
+        const App = () => {
+            const [products, setProducts] = React.useState([]);
+            const [loading, setLoading] = React.useState(true);
+            const [error, setError] = React.useState(null);
+            const [editingProduct, setEditingProduct] = React.useState(null);
+            const [formData, setFormData] = React.useState({ name: '', price: '', image: '', description: '' });
+            const [showForm, setShowForm] = React.useState(false);
+            const [notification, setNotification] = React.useState(null);
+            const [uploadingImage, setUploadingImage] = React.useState(false);
+            const [dragActive, setDragActive] = React.useState(false);
+
+            const showNotif = (msg, type = 'success') => {
+                setNotification({ msg, type });
+                setTimeout(() => setNotification(null), 3000);
+            };
+
+            const loadProducts = async () => {
+                setLoading(true);
+                setError(null);
+                try {
+                    const { data, error } = await supabase
+                        .from('products')
+                        .select('*')
+                        .order('created_at', { ascending: false });
+                    if (error) throw new Error(error.message);
+                    setProducts(data || []);
+                } catch (err) {
+                    console.error(err);
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            React.useEffect(() => {
+                loadProducts();
+            }, []);
+
+            const uploadImage = async (file) => {
+                if (!file) return null;
+                if (!file.type.startsWith('image/')) {
+                    showNotif('Solo se permiten imágenes', 'error');
+                    return null;
+                }
+                if (file.size > 5 * 1024 * 1024) {
+                    showNotif('Máximo 5MB', 'error');
+                    return null;
+                }
+
+                setUploadingImage(true);
+                const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
+                const filePath = `products/${fileName}`;
+
+                try {
+                    const { error: uploadError } = await supabase.storage
+                        .from('product-images')
+                        .upload(filePath, file);
+                    if (uploadError) throw uploadError;
+                    const { data: urlData } = supabase.storage.from('product-images').getPublicUrl(filePath);
+                    showNotif('Imagen subida');
+                    return urlData.publicUrl;
+                } catch (err) {
+                    console.error(err);
+                    showNotif('Error al subir: ' + err.message, 'error');
+                    return null;
+                } finally {
+                    setUploadingImage(false);
+                }
+            };
+
+            const handleDrop = async (e) => {
+                e.preventDefault();
+                setDragActive(false);
+                const file = e.dataTransfer.files[0];
+                if (file) {
+                    const url = await uploadImage(file);
+                    if (url) setFormData({ ...formData, image: url });
+                }
+            };
+
+            const handleFileSelect = async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const url = await uploadImage(file);
+                    if (url) setFormData({ ...formData, image: url });
+                }
+            };
+
+            const handleInputChange = (e) => {
+                setFormData({ ...formData, [e.target.name]: e.target.value });
+            };
+
+            const openCreateForm = () => {
+                setEditingProduct(null);
+                setFormData({ name: '', price: '', image: '', description: '' });
+                setShowForm(true);
+            };
+
+            const openEditForm = (product) => {
+                setEditingProduct(product);
+                setFormData({
+                    name: product.name,
+                    price: product.price,
+                    image: product.image,
+                    description: product.description || ''
+                });
+                setShowForm(true);
+            };
+
+            const saveProduct = async () => {
+                if (!formData.name || !formData.price || !formData.image) {
+                    showNotif('Completa nombre, precio e imagen', 'error');
+                    return;
+                }
+                const priceNum = parseFloat(formData.price);
+                if (isNaN(priceNum)) {
+                    showNotif('Precio inválido', 'error');
+                    return;
+                }
+                const productData = {
+                    name: formData.name,
+                    price: priceNum,
+                    image: formData.image,
+                    description: formData.description || null
+                };
+                try {
+                    if (editingProduct) {
+                        const { error } = await supabase
+                            .from('products')
+                            .update(productData)
+                            .eq('id', editingProduct.id);
+                        if (error) throw error;
+                        showNotif('Producto actualizado');
+                    } else {
+                        const { error } = await supabase
+                            .from('products')
+                            .insert([productData]);
+                        if (error) throw error;
+                        showNotif('Producto creado');
+                    }
+                    loadProducts();
+                    setShowForm(false);
+                } catch (err) {
+                    showNotif('Error al guardar: ' + err.message, 'error');
+                }
+            };
+
+            const deleteProduct = async (id, name) => {
+                if (!confirm(`¿Eliminar "${name}"?`)) return;
+                try {
+                    const { error } = await supabase
+                        .from('products')
+                        .delete()
+                        .eq('id', id);
+                    if (error) throw error;
+                    showNotif(`"${name}" eliminado`);
+                    loadProducts();
+                } catch (err) {
+                    showNotif('Error al eliminar: ' + err.message, 'error');
+                }
+            };
+
+            return (
+                <div className="min-h-screen p-6">
+                    {notification && (
+                        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 bg-white rounded-xl shadow-lg px-6 py-3 flex items-center gap-2 border-l-4 border-green-500">
+                            <i className={`fas ${notification.type === 'error' ? 'fa-exclamation-circle text-red-500' : 'fa-check-circle text-green-500'}`}></i>
+                            <span>{notification.msg}</span>
+                        </div>
+                    )}
+
+                    <div className="container mx-auto max-w-6xl">
+                        <div className="flex justify-between items-center mb-8 flex-wrap gap-4">
+                            <div>
+                                <h1 className="font-display text-4xl text-pink-600">Admin Dulcemente</h1>
+                                <p className="text-gray-500">Arrastra imágenes para subirlas a Supabase</p>
+                            </div>
+                            <button onClick={openCreateForm} className="bg-pink-500 hover:bg-pink-600 text-white px-6 py-3 rounded-full font-bold shadow-lg btn-admin flex items-center gap-2">
+                                <i className="fas fa-plus"></i> Nuevo Producto
+                            </button>
+                        </div>
+
+                        {error && (
+                            <div className="error-box p-4 rounded-xl mb-6 text-red-700">
+                                <i className="fas fa-database mr-2"></i> <strong>Error:</strong> {error}
+                                <div className="text-sm mt-2 bg-white p-2 rounded">
+                                    <p>Posibles causas:</p>
+                                    <ul className="list-disc ml-6">
+                                        <li>La tabla <code>products</code> no existe en Supabase</li>
+                                        <li>RLS está habilitado y no hay políticas</li>
+                                        <li>La URL o clave anónima son incorrectas</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
+
+                        {showForm && (
+                            <div className="glass-card p-6 mb-8 border-2 border-pink-200">
+                                <h2 className="text-2xl font-bold text-gray-800 mb-4">{editingProduct ? '✏️ Editar Producto' : '✨ Nuevo Producto'}</h2>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div><label className="block text-sm font-semibold text-gray-600">Nombre *</label><input type="text" name="name" value={formData.name} onChange={handleInputChange} className="w-full px-4 py-2 border border-pink-300 rounded-xl" /></div>
+                                    <div><label className="block text-sm font-semibold text-gray-600">Precio (CUP) *</label><input type="number" step="0.01" name="price" value={formData.price} onChange={handleInputChange} className="w-full px-4 py-2 border border-pink-300 rounded-xl" /></div>
+                                    <div className="md:col-span-2">
+                                        <label className="block text-sm font-semibold text-gray-600 mb-2">Imagen *</label>
+                                        <div className={`drop-zone p-6 text-center ${dragActive ? 'dragover' : ''}`} onDragOver={e => { e.preventDefault(); setDragActive(true); }} onDragLeave={() => setDragActive(false)} onDrop={handleDrop} onClick={() => document.getElementById('fileInput').click()}>
+                                            <input type="file" id="fileInput" accept="image/*" className="hidden" onChange={handleFileSelect} />
+                                            {uploadingImage ? <i className="fas fa-spinner fa-spin text-2xl text-pink-500"></i> : <><i className="fas fa-cloud-upload-alt text-3xl text-pink-400 mb-2"></i><p className="text-gray-500">Arrastra una imagen o haz clic</p><p className="text-xs text-gray-400">JPG, PNG, GIF (máx 5MB)</p></>}
+                                        </div>
+                                        {formData.image && <div className="mt-2 flex items-center gap-3"><img src={formData.image} className="h-16 w-16 object-cover rounded-lg shadow" alt="preview" /><span className="text-xs text-gray-500 truncate">{formData.image}</span></div>}
+                                        <input type="hidden" name="image" value={formData.image} />
+                                    </div>
+                                    <div className="md:col-span-2"><label className="block text-sm font-semibold text-gray-600">Descripción</label><textarea name="description" rows="2" value={formData.description} onChange={handleInputChange} className="w-full px-4 py-2 border border-pink-300 rounded-xl"></textarea></div>
+                                </div>
+                                <div className="flex justify-end gap-3 mt-6">
+                                    <button onClick={() => setShowForm(false)} className="px-6 py-2 bg-gray-200 rounded-full">Cancelar</button>
+                                    <button onClick={saveProduct} className="px-6 py-2 bg-pink-500 text-white rounded-full hover:bg-pink-600 btn-admin">{editingProduct ? 'Actualizar' : 'Crear'}</button>
+                                </div>
+                            </div>
+                        )}
+
+                        {loading ? (
+                            <div className="text-center py-12"><i className="fas fa-spinner fa-spin text-4xl text-pink-400"></i><p>Cargando productos...</p></div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {products.map(p => (
+                                    <div key={p.id} className="glass-card overflow-hidden">
+                                        <img src={p.image} className="w-full h-48 object-cover" onError={e => e.target.src = 'https://placehold.co/400x300/FFB6C1/FFFFFF?text=Dulcemente'} />
+                                        <div className="p-5">
+                                            <h3 className="font-bold text-xl">{p.name}</h3>
+                                            <p className="text-pink-600 text-2xl font-bold">${p.price}</p>
+                                            <p className="text-gray-500 text-sm mt-2">{p.description || 'Sin descripción'}</p>
+                                            <div className="flex gap-2 mt-4">
+                                                <button onClick={() => openEditForm(p)} className="flex-1 bg-amber-400 text-white py-2 rounded-xl btn-admin"><i className="fas fa-edit"></i> Editar</button>
+                                                <button onClick={() => deleteProduct(p.id, p.name)} className="flex-1 bg-red-400 text-white py-2 rounded-xl btn-admin"><i className="fas fa-trash"></i> Eliminar</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {!loading && !error && products.length === 0 && <div className="text-center py-12 text-gray-400">No hay productos. ¡Crea el primero!</div>}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
